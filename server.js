@@ -174,7 +174,7 @@ const insertSearchStmt = db.prepare(`
     sources = excluded.sources,
     updated_at = CURRENT_TIMESTAMP
 `);
-const cleanOldSearchesStmt = db.prepare('DELETE FROM searches WHERE updated_at < datetime("now", "-7 days")');
+const cleanOldSearchesStmt = db.prepare(`DELETE FROM searches WHERE updated_at < datetime('now', '-7 days')`);
 
 // Clean old cache entries on startup
 cleanOldSearchesStmt.run();
@@ -578,6 +578,69 @@ app.get('/api/search', async (req, res) => {
     // Check database cache first
     const dbCached = getCachedSearch(query);
     if (dbCached) {
+        // Check if any platform has 0 results - if so, re-search that platform
+        const needsRefresh = dbCached.sources.thingiverse === 0 ||
+            dbCached.sources.printables === 0 ||
+            dbCached.sources.makerworld === 0;
+
+        if (needsRefresh) {
+            console.log('Cache has missing platforms, performing partial refresh...');
+
+            const searchPromises = [];
+
+            // Only search platforms that had 0 results
+            if (dbCached.sources.thingiverse === 0) {
+                console.log('Re-searching Thingiverse...');
+                searchPromises.push(searchThingiverse(query));
+            } else {
+                searchPromises.push(Promise.resolve(dbCached.results.filter(r => r.source === 'thingiverse')));
+            }
+
+            if (dbCached.sources.printables === 0) {
+                console.log('Re-searching Printables...');
+                searchPromises.push(searchPrintables(query));
+            } else {
+                searchPromises.push(Promise.resolve(dbCached.results.filter(r => r.source === 'printables')));
+            }
+
+            if (dbCached.sources.makerworld === 0) {
+                console.log('Re-searching MakerWorld...');
+                searchPromises.push(searchMakerWorld(query));
+            } else {
+                searchPromises.push(Promise.resolve(dbCached.results.filter(r => r.source === 'makerworld')));
+            }
+
+            const settledPromises = await Promise.allSettled(searchPromises);
+
+            const thingiverseResults = settledPromises[0].status === 'fulfilled' ? settledPromises[0].value : [];
+            const printablesResults = settledPromises[1].status === 'fulfilled' ? settledPromises[1].value : [];
+            const makerworldResults = settledPromises[2].status === 'fulfilled' ? settledPromises[2].value : [];
+
+            const allResults = [
+                ...thingiverseResults,
+                ...printablesResults,
+                ...makerworldResults
+            ];
+
+            const response = {
+                query,
+                total: allResults.length,
+                results: allResults,
+                sources: {
+                    thingiverse: thingiverseResults.length,
+                    printables: printablesResults.length,
+                    makerworld: makerworldResults.length
+                }
+            };
+
+            // Update cache with new results
+            cache.set(`search_${query}`, response);
+            cacheSearch(query, allResults, response.sources);
+            console.log('Cache updated with refreshed results');
+
+            return res.json(response);
+        }
+
         console.log(`Returning cached results from database (cached at: ${dbCached.cached_at})`);
         return res.json(dbCached);
     }
