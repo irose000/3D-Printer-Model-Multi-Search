@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Database
+search_cache.db
+search_cache.db-journal
+
+# Debug files
+*.html
+thingiverse_debug.html
+printables_debug.html
+makerworld_debug.html
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build output (if you build the frontend)
+client/dist/
+client/build/
+
+# IDE
+.vscode/
+.idea/
